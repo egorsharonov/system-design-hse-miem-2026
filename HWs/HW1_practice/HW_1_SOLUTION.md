@@ -228,13 +228,13 @@ docker compose -f docker-compose-lb.yaml run --rm -e SCENARIO=read_heavy k6 run 
 
 > ![img_19.png](img_19.png) ![img_20.png](img_20.png) k6 dashboard после `read_heavy` на LB-стенде
 
-> ![img_21.png](img_21.png) Postgres/backend dashboard после контрольных прогонов
+> ![img_21.png](img_21.png) Postgres dashboard после контрольных прогонов
 
 Итог после исправлений:
 
-- `storm`: `595316` HTTP requests, `0.00%` failed, p95 HTTP latency `81.96 ms`, средняя интенсивность около `8502 req/s`;
-- `wave`: `648454` HTTP requests, `0.00%` failed, p95 HTTP latency `5.76 ms`, средняя интенсивность около `3088 req/s`;
-- `read_heavy`: `220606` HTTP requests, `0.00%` failed, p95 HTTP latency `4.2 ms`, средняя интенсивность около `1837 req/s`;
-- Prometheus показал все 3 backend в `UP`, суммарный пик DB connections был ограничен примерно `150`, SQL errors за контрольный интервал не выросли.
+- `storm`: `613847` HTTP requests, HTTP failures отсутствуют, peak RPS около `11.4k req/s`, HTTP request duration около `75 ms`, checks success `100%`;
+- `wave`: `647456` HTTP requests, HTTP failures отсутствуют, peak RPS около `4.84k req/s`, HTTP request duration около `6.88 ms`, checks success `100%`;
+- `read_heavy`: `216513` HTTP requests, HTTP failures отсутствуют, peak RPS около `2.45k req/s`, HTTP request duration около `3.89 ms`, checks success `100%`;
+- Prometheus показал все 3 backend в `UP`, на Postgres dashboard QPS доходил примерно до `3260`, число активных соединений доходило до `150`, conflicts/deadlocks не появились.
 
 Главный эффект исправлений: система перестала массово отдавать HTTP 5xx/502 на тех же сценариях. Самыми важными изменениями оказались горизонтальное масштабирование backend, ограничение пула соединений к PostgreSQL и более аккуратный read path с пагинацией и индексом под сортировку заказов.
