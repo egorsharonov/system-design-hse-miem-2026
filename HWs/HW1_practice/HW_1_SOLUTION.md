@@ -185,3 +185,56 @@ docker compose run --rm -e SCENARIO=read_heavy k6 run --out experimental-prometh
 | Ошибки при резком пике                            | Добавить rate limit, backpressure, очередь для записи заказов                        |
 | Недостаточно наблюдаемости                        | Добавить алерты по p95, 5xx, DB wait count и failed order creation                   |
 | Nginx становится bottleneck                       | Настроить worker connections или вынести балансировщик отдельно                      |
+
+## 6. Контрольный прогон после исправлений
+
+После первых прогонов были внесены изменения:
+
+- включен LB-стенд `docker-compose-lb.yaml`: HAProxy балансирует трафик на 3 backend-инстанса;
+- для каждого backend ограничен пул соединений к PostgreSQL: `DB_MAX_OPEN_CONNS=50`, `DB_MAX_IDLE_CONNS=25`;
+- добавлен `/health` endpoint и HTTP health check в HAProxy;
+- добавлена пагинация для списков `/api/users` и `/api/orders`: `limit` по умолчанию `50`, максимум `100`, `offset` не меньше `0`;
+- добавлены индексы `idx_orders_created_at_id_desc` и `idx_orders_user_id`;
+- для LB-стенда добавлен отдельный Prometheus-конфиг, который собирает метрики со всех трех backend.
+
+Стенд после исправлений запускался так:
+
+```powershell
+docker compose down
+docker compose -f docker-compose-lb.yaml up -d --build
+```
+
+Индексы были применены к существующей БД:
+
+```powershell
+docker compose -f docker-compose-lb.yaml exec -T db psql -U demo -d demo -c "CREATE INDEX IF NOT EXISTS idx_orders_created_at_id_desc ON orders (created_at DESC, id DESC); CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders (user_id);"
+```
+
+> ![img_13.png](img_13.png) `docker compose -f docker-compose-lb.yaml ps`, где видны `backend`, `backend-2`, `backend-3`, `haproxy`, `postgres`, `prometheus`, `grafana`
+
+> ![img_14.png](img_14.png) Prometheus Targets после исправлений, где `backend:8081`, `backend-2:8081`, `backend-3:8081` в состоянии `UP`
+
+Контрольные прогоны:
+
+```powershell
+docker compose -f docker-compose-lb.yaml run --rm -e SCENARIO=storm k6 run --out experimental-prometheus-rw /scripts/load-script.js
+docker compose -f docker-compose-lb.yaml run --rm -e SCENARIO=wave k6 run --out experimental-prometheus-rw /scripts/load-script.js
+docker compose -f docker-compose-lb.yaml run --rm -e SCENARIO=read_heavy k6 run --out experimental-prometheus-rw /scripts/load-script.js
+```
+
+> ![img_15.png](img_15.png) ![img_16.png](img_16.png) k6 dashboard после `storm` на LB-стенде
+
+> ![img_17.png](img_17.png) ![img_18.png](img_18.png) k6 dashboard после `wave` на LB-стенде
+
+> ![img_19.png](img_19.png) ![img_20.png](img_20.png) k6 dashboard после `read_heavy` на LB-стенде
+
+> ![img_21.png](img_21.png) Postgres/backend dashboard после контрольных прогонов
+
+Итог после исправлений:
+
+- `storm`: `595316` HTTP requests, `0.00%` failed, p95 HTTP latency `81.96 ms`, средняя интенсивность около `8502 req/s`;
+- `wave`: `648454` HTTP requests, `0.00%` failed, p95 HTTP latency `5.76 ms`, средняя интенсивность около `3088 req/s`;
+- `read_heavy`: `220606` HTTP requests, `0.00%` failed, p95 HTTP latency `4.2 ms`, средняя интенсивность около `1837 req/s`;
+- Prometheus показал все 3 backend в `UP`, суммарный пик DB connections был ограничен примерно `150`, SQL errors за контрольный интервал не выросли.
+
+Главный эффект исправлений: система перестала массово отдавать HTTP 5xx/502 на тех же сценариях. Самыми важными изменениями оказались горизонтальное масштабирование backend, ограничение пула соединений к PostgreSQL и более аккуратный read path с пагинацией и индексом под сортировку заказов.

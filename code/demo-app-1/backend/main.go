@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -126,6 +127,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	configureDBPool(db)
 	dbStatsDB = db
 	for i := 0; i < 10; i++ {
 		if err := db.Ping(); err == nil {
@@ -152,6 +154,10 @@ func main() {
 	api.HandleFunc("/orders/{id}", s.updateOrder).Methods("PUT")
 	api.HandleFunc("/orders/{id}", s.deleteOrder).Methods("DELETE")
 
+	r.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
 	r.Handle("/metrics", promhttp.Handler())
 
 	handler := instrumentHandler(r)
@@ -159,6 +165,24 @@ func main() {
 	addr := ":8081"
 	log.Println("listening on", addr)
 	log.Fatal(http.ListenAndServe(addr, handler))
+}
+
+func configureDBPool(db *sql.DB) {
+	db.SetMaxOpenConns(envInt("DB_MAX_OPEN_CONNS", 50))
+	db.SetMaxIdleConns(envInt("DB_MAX_IDLE_CONNS", 25))
+	db.SetConnMaxLifetime(time.Duration(envInt("DB_CONN_MAX_LIFETIME_SECONDS", 300)) * time.Second)
+}
+
+func envInt(name string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
 }
 
 func instrumentHandler(h http.Handler) http.Handler {
@@ -190,6 +214,33 @@ func observeDB(operation, entity string, start time.Time, err error) {
 	if err != nil {
 		dbQueryErrors.WithLabelValues(operation, entity).Inc()
 	}
+}
+
+func pagination(r *http.Request) (int, int) {
+	limit := queryInt(r, "limit", 50)
+	if limit < 1 {
+		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	offset := queryInt(r, "offset", 0)
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
+func queryInt(r *http.Request, name string, fallback int) int {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return value
 }
 
 type statusRecorder struct {
@@ -235,8 +286,9 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
+	limit, offset := pagination(r)
 	start := time.Now()
-	rows, err := s.db.Query("SELECT id, name, email, created_at FROM users ORDER BY id DESC LIMIT 100")
+	rows, err := s.db.Query("SELECT id, name, email, created_at FROM users ORDER BY id DESC LIMIT $1 OFFSET $2", limit, offset)
 	observeDB("select_list", "users", start, err)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -328,8 +380,9 @@ func (s *Server) createOrder(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listOrders(w http.ResponseWriter, r *http.Request) {
+	limit, offset := pagination(r)
 	start := time.Now()
-	rows, err := s.db.Query("SELECT id, user_id, amount, description, created_at FROM orders ORDER BY id DESC LIMIT 100")
+	rows, err := s.db.Query("SELECT id, user_id, amount, description, created_at FROM orders ORDER BY id DESC LIMIT $1 OFFSET $2", limit, offset)
 	observeDB("select_list", "orders", start, err)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
