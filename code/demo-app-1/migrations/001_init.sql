@@ -12,3 +12,6 @@ CREATE TABLE IF NOT EXISTS orders (
     description TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_orders_created_at_id_desc ON orders (created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_orders_user_id ON orders (user_id);

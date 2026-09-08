@@ -17,6 +17,8 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgres://demo:demo@db:5432/demo?sslmode=disable
+      DB_MAX_OPEN_CONNS: 50
+      DB_MAX_IDLE_CONNS: 25
     ports:
       - "8081:8081"
     depends_on:
@@ -26,6 +28,8 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgres://demo:demo@db:5432/demo?sslmode=disable
+      DB_MAX_OPEN_CONNS: 50
+      DB_MAX_IDLE_CONNS: 25
     ports:
       - "8082:8081"
     depends_on:
@@ -35,6 +39,8 @@ services:
     build: ./backend
     environment:
       DATABASE_URL: postgres://demo:demo@db:5432/demo?sslmode=disable
+      DB_MAX_OPEN_CONNS: 50
+      DB_MAX_IDLE_CONNS: 25
     ports:
       - "8083:8081"
     depends_on:
@@ -67,6 +73,8 @@ services:
   
   k6:
     image: grafana/k6:latest
+    profiles:
+      - load
     volumes:
       - ./k6/scripts:/scripts
     command: run --out experimental-prometheus-rw /scripts/load-script.js
@@ -80,7 +88,7 @@ services:
   prometheus:
     image: prom/prometheus:latest
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/prometheus-lb.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "9090:9090"

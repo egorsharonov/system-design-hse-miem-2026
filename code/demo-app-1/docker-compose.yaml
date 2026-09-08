@@ -48,6 +48,8 @@ services:
   
   k6:
     image: grafana/k6:latest
+    profiles:
+      - load
     volumes:
       - ./k6/scripts:/scripts
     command: run --out experimental-prometheus-rw /scripts/load-script.js
